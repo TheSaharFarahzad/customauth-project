@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>To-Do App</title>
+</head>
+
+<body>
+    <h1>To-Do Application</h1>
+    <input type="text" id="todo-input" placeholder="Enter a new task">
+    <button onclick="addTodo()">Add Task</button>
+
+    <ul id="todo-list"></ul>
+
+    <script>
+        // Function to fetch and display the to-dos from the backend
+        function fetchTodos() {
+            fetch('http://127.0.0.1:8000/tasks')  // Changed the URL to 'http://127.0.0.1:8000/tasks'
+                .then(response => response.json())
+                .then(data => {
+                    const todoList = document.getElementById('todo-list');
+                    todoList.innerHTML = '';
+                    data.forEach((todo) => {
+                        const li = document.createElement('li');
+                        li.textContent = `${todo.title} - ${todo.done ? 'Completed' : 'Pending'}`;
+                        li.onclick = () => deleteTodo(todo.id);  // Pass the ID for deletion
+                        todoList.appendChild(li);
+                    });
+                });
+        }
+
+        // Function to add a new to-do
+        function addTodo() {
+            const taskTitle = document.getElementById('todo-input').value;
+            if (taskTitle) {
+                fetch('http://127.0.0.1:8000/tasks', {  // Changed the URL to 'http://127.0.0.1:8000/tasks'
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ title: taskTitle })  // Changed 'task' to 'title'
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log(data);
+                        fetchTodos();  // Refresh the list after adding a new task
+                    });
+            }
+        }
+
+        // Function to delete a to-do
+        function deleteTodo(id) {
+            fetch(`http://127.0.0.1:8000/tasks/${id}`, {  // Changed the URL to 'http://127.0.0.1:8000/tasks/{id}'
+                method: 'DELETE'
+            })
+                .then(response => response.json())
+                .then(data => {
+                    console.log(data);
+                    fetchTodos();  // Refresh the list after deleting a task
+                });
+        }
+
+        // Initial fetch of to-dos when the page loads
+        fetchTodos();
+    </script>
+</body>
+
+</html>
