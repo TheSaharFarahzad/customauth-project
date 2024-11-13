@@ -43,15 +43,14 @@ You can access each lesson's version of the code by clicking on the lesson below
    Learn best practices for writing unit tests in Django, including how to structure tests for maximum clarity and effectiveness.
 
 
-## <a name='SetupInstructions'></a>Setup Instructions
+## <a name='PreSetupInstructions'></a>Pre-Setup Instructions
 
 ### 1. <a name='CloneTheRepository'></a>Clone the Repository
 
 Clone this repository to your local machine by running the following commands:
 
 ```bash
-git clone https://github.com/TheSaharFarahzad/test-customauth-app.git
-cd test-customauth-app
+git clone https://github.com/TheSaharFarahzad/customauth-app.git
 ```
 
 If you have already cloned the repository and want to update it, use the following command:
@@ -105,15 +104,55 @@ CREATE DATABASE DATABASE_NAME OWNER DATABASE_USER;
 
 ```
 
-### 5. <a name='Setup'></a>Setup
+## <a name='Setup'></a>Setup
 
 In this section we explain how you can set up the project with/without Docker.
 
-#### 5.1. <a name='SetupWithDocker'></a>Setup With Docker
+### 1. <a name='SetupWithDocker'></a>Setup With Docker
 
-#### 5.2. <a name='SetupWithoutDocker'></a>Setup Without Docker
+### 2. <a name='SetupWithoutDocker'></a>Setup Without Docker
 
-### 5. <a name='AccessTheApplication'></a>Access the Application
+For maintaining a clean development environment, it's recommended to use a virtual environment for installing application-specific packages. There are various methods to create virtual environments, such as using Pipenv. Below is an example demonstrating how to set up a virtual environment using native tools:
+
+Windows:
+```bash
+cd custom_user_project
+python -m venv venv
+```
+
+Linux:
+```bash
+cd custom_user_project
+python3 -m venv .venv
+```
+
+**NOTE**: Ensure you add your virtual environment directory to .gitignore to avoid committing unnecessary files to your repository.
+
+Then, install the requirements in your virtual environment. But first, you need to activate the environment:
+
+Windows:
+```bash
+venv\Scripts\activate
+```
+
+Linux:
+```bash
+source .venv/bin/activate
+```
+
+To install all requirements for local development, run the following command:
+
+```bash
+pip install -r requirements.txt
+```
+
+To deactivate the virtual environment you just need to run the following commands:
+
+```bash
+deactivate
+```
+
+## <a name='AccessTheApplication'></a>Access the Application
 
 Once you have the application running, you can access it at [http://localhost:8000](http://localhost:8000).
 
