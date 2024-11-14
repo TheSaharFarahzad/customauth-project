@@ -22,7 +22,10 @@ env = environ.Env()
 environ.Env.read_env(os.path.join(os.getcwd(), ".env"))
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = "django-insecure-(6e-bdm9pm%tv&6pp76obn8&2v(8xe-gl8r+*8f07*40b5b+)%"
+SECRET_KEY = env(
+    "SECRET_KEY",
+    default="django-insecure-(6e-bdm9pm%tv&6pp76obn8&2v(8xe-gl8r+*8f07*40b5b+)%",
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
@@ -39,7 +42,28 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "rest_framework",
+    "rest_framework_simplejwt",
+    "drf_spectacular",
+    "accounts",
 ]
+
+AUTH_USER_MODEL = "accounts.CustomUser"
+
+REST_FRAMEWORK = {
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ],
+}
+
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Custom Auth API",
+    "DESCRIPTION": "Welcome to the **Custom Auth App** built using **Django REST Framework (DRF)**. This project is designed to help you understand how to implement unit testing using **Pytest**. Follow the lessons to build your skills step-by-step.",
+    "VERSION": "1.0.0",
+}
+
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
