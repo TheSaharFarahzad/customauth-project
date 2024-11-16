@@ -11,14 +11,13 @@ from .views import (
     PasswordResetView,
     PasswordResetConfirmView,
     UserProfileView,
-    UpdateUserProfileView,
 )
 
 
 urlpatterns = [
     path("register/", RegisterView.as_view(), name="register"),
     re_path(
-        r"^register/verify/(?P<uidb64>\d+)/(?P<token>[0-9A-Za-z]{1,64})/$",
+        r"^register/verify/(?P<uidb64>[0-9A-Za-z_\-]+)/(?P<token>[0-9A-Za-z]{1,64})/$",
         RegisterVerifyView.as_view(),
         name="register_verify",
     ),
@@ -31,6 +30,5 @@ urlpatterns = [
         PasswordResetConfirmView.as_view(),
         name="password_reset_confirm",
     ),
-    path("user/", UserProfileView.as_view(), name="user_profile"),
-    path("user/update/", UpdateUserProfileView.as_view(), name="update_user_profile"),
+    path("profile/", UserProfileView.as_view(), name="user_profile"),
 ]

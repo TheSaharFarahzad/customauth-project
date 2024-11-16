@@ -3,12 +3,18 @@ from rest_framework import serializers
 
 # 2. Local imports
 from django.contrib.auth import get_user_model
+from .models import Student, Instructor
 
 
 class RegisterSerializer(serializers.ModelSerializer):
     class Meta:
         model = get_user_model()
-        fields = ["email", "first_name", "last_name", "password"]
+        fields = [
+            "email",
+            "first_name",
+            "last_name",
+            "password",
+        ]
         extra_kwargs = {"password": {"write_only": True}}
 
     def create(self, validated_data):
@@ -29,12 +35,38 @@ class CustomUserSerializer(serializers.ModelSerializer):
             "first_name",
             "last_name",
             "password",
+            "bio",
+            "is_student",
+            "is_instructor",
+            "picture",
         ]
         extra_kwargs = {"password": {"write_only": True}}
 
     def create(self, validated_data):
         user = get_user_model().objects.create_user(**validated_data)
         return user
+
+
+class StudentProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Student
+        fields = [
+            "user",
+            "interests",
+            "skill_level",
+        ]
+
+
+class InstructorProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Instructor
+        fields = [
+            "user",
+            "verification_documents",
+            "is_verified",
+            "expertise_area",
+            "years_of_experience",
+        ]
 
 
 class ChangePasswordSerializer(serializers.Serializer):

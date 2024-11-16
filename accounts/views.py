@@ -1,7 +1,6 @@
 # 1. Django imports
 from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.tokens import default_token_generator
-from django.core.mail import send_mail
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 
 # 2. Django REST Framework imports
@@ -16,8 +15,10 @@ from rest_framework_simplejwt.exceptions import TokenError
 from .serializers import (
     RegisterSerializer,
     LoginSerializer,
-    ChangePasswordSerializer,
     CustomUserSerializer,
+    StudentProfileSerializer,
+    InstructorProfileSerializer,
+    ChangePasswordSerializer,
     PasswordResetSerializer,
     PasswordResetConfirmSerializer,
 )
@@ -29,7 +30,6 @@ class RegisterView(GenericAPIView):
     serializer_class = RegisterSerializer
 
     def post(self, request):
-
         serializer = self.get_serializer(data=request.data)
         if serializer.is_valid():
             user = serializer.save()
@@ -39,12 +39,12 @@ class RegisterView(GenericAPIView):
 
             verification_url = f"{request.scheme}://{request.get_host()}/register/verify/{user.id}/{verification_token}/"
 
-            send_mail(
-                "Account Activation",
-                f"Click the link to verify your email: {verification_url}",
-                "webmaster@localhost",
-                [user.email],
-                fail_silently=False,
+            # Using the custom send_email function
+            send_email(
+                subject="Account Activation",
+                body="register/verify_email_template.html",
+                context={"verification_url": verification_url},
+                recipient_list=[user.email],
             )
 
             return Response(
@@ -53,7 +53,6 @@ class RegisterView(GenericAPIView):
                 },
                 status=status.HTTP_201_CREATED,
             )
-
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -61,7 +60,6 @@ class RegisterVerifyView(GenericAPIView):
 
     def get(self, request, uidb64, token):
         try:
-
             access_token = AccessToken(token)
 
             user = CustomUser.objects.get(id=uidb64)
@@ -177,7 +175,6 @@ class PasswordResetConfirmView(GenericAPIView):
 
     def post(self, request, uidb64, token):
         try:
-
             user_id = urlsafe_base64_decode(uidb64).decode()
             user = get_user_model().objects.get(id=user_id)
 
@@ -188,7 +185,6 @@ class PasswordResetConfirmView(GenericAPIView):
 
             serializer = self.get_serializer(data=request.data)
             if serializer.is_valid():
-
                 serializer.save(user=user)
 
                 return Response(
@@ -202,23 +198,15 @@ class PasswordResetConfirmView(GenericAPIView):
 
 class UserProfileView(GenericAPIView):
     permission_classes = [permissions.IsAuthenticated]
-    serializer_class = CustomUserSerializer
 
     def get(self, request):
-        serializer = self.get_serializer(request.user)
+        user = request.user
+
+        if user.is_student:
+            serializer = StudentProfileSerializer(user.student)
+        elif user.is_instructor:
+            serializer = InstructorProfileSerializer(user.instructor)
+        else:
+            serializer = CustomUserSerializer(user)
+
         return Response(serializer.data, status=status.HTTP_200_OK)
-
-
-class UpdateUserProfileView(GenericAPIView):
-    permission_classes = [permissions.IsAuthenticated]
-    serializer_class = CustomUserSerializer
-
-    def put(self, request):
-        serializer = self.get_serializer(request.user, data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(
-                {"message": "User profile updated successfully"},
-                status=status.HTTP_200_OK,
-            )
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
