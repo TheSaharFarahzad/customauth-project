@@ -48,9 +48,10 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     )
     is_student = models.BooleanField(default=False)
     is_instructor = models.BooleanField(default=False)
+    email_verified = models.BooleanField(default=False)
 
     USERNAME_FIELD = "email"
-    REQUIRED_FIELDS = ["first_name", "last_name"]
+    REQUIRED_FIELDS = []
 
     objects = CustomUserManager()
 

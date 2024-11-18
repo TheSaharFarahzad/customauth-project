@@ -6,19 +6,20 @@ from django.contrib.auth import get_user_model
 from .models import Student, Instructor
 
 
-class RegisterSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = get_user_model()
-        fields = [
-            "email",
-            "first_name",
-            "last_name",
-            "password",
-        ]
-        extra_kwargs = {"password": {"write_only": True}}
+class RegisterSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True, min_length=8)
+    confirm_password = serializers.CharField(write_only=True, min_length=8)
+
+    def validate(self, data):
+        if data["password"] != data["confirm_password"]:
+            raise serializers.ValidationError({"password": "Passwords do not match."})
+        return data
 
     def create(self, validated_data):
-        user = get_user_model().objects.create_user(**validated_data)
+        email = validated_data["email"]
+        password = validated_data["password"]
+        user = get_user_model().objects.create_user(email=email, password=password)
         return user
 
 
