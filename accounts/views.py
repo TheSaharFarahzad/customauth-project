@@ -1,21 +1,25 @@
-# 1. Django REST Framework imports
-from rest_framework import status, permissions
-from django.contrib.auth import get_user_model
+# 1. Django imports
+from django.contrib.auth import get_user_model, authenticate
 from django.contrib.auth.tokens import default_token_generator
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
-from django.http import Http404
+from django.utils.translation import (
+    gettext_lazy as _,
+    gettext as _,
+)
+from django.shortcuts import get_object_or_404
 
 # 2. Third-party imports
-from rest_framework import status
+from rest_framework import status, permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.generics import GenericAPIView
-from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
-from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.tokens import RefreshToken
 
 # 3. Local imports
 from .serializers import (
     RegisterSerializer,
+    VerifyEmailSerializer,
+    ResendVerificationSerializer,
     LoginSerializer,
     CustomUserSerializer,
     StudentProfileSerializer,
@@ -25,142 +29,84 @@ from .serializers import (
     PasswordResetConfirmSerializer,
 )
 from .email import send_email
-from .models import CustomUser
 
-
-from django.contrib.auth import get_user_model
-from rest_framework import status
-from rest_framework.response import Response
-from rest_framework_simplejwt.tokens import AccessToken
-from rest_framework.generics import GenericAPIView
-import base64
-from django.core.exceptions import ValidationError
-from django.contrib.auth import authenticate
-from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework.response import Response
-from rest_framework import status
-from rest_framework.generics import GenericAPIView
-from .serializers import LoginSerializer
 
 User = get_user_model()
 
 
-class RegisterView(GenericAPIView):
+class RegisterAPIView(GenericAPIView):
     serializer_class = RegisterSerializer
 
-    def get(self, request, uidb64, token):
-        try:
-            user_id = int(urlsafe_base64_decode(uidb64).decode())
-            user = User.objects.get(id=user_id)
-        except (User.DoesNotExist, ValueError, TypeError):
-            raise Http404("User not found.")
+    def post(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
 
-        # Validate the token
-        try:
-            access_token = AccessToken(token)
-            if str(user.id) != str(access_token["user_id"]):
-                return Response(
-                    {"detail": "Invalid token."}, status=status.HTTP_400_BAD_REQUEST
-                )
-        except TokenError:
-            return Response(
-                {"detail": "Invalid token."}, status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Activate the user
-        user.is_active = True
-        user.email_verified = True
-        user.save()
-
+        # Send verification email
+        token = default_token_generator.make_token(user)
+        uid = urlsafe_base64_encode(str(user.pk).encode())
+        send_email(
+            subject="Verify Your Email",
+            body="emails/verify_email.html",
+            context={"token": token, "uid": uid, "user": user},
+            recipient_list=[user.email],
+        )
         return Response(
-            {"detail": "User verified successfully."}, status=status.HTTP_200_OK
+            {
+                "detail": "Registration successful. Check your email to verify your account."
+            },
+            status=status.HTTP_201_CREATED,
         )
 
-    def post(self, request):
+
+class VerifyEmailAPIView(GenericAPIView):
+    serializer_class = VerifyEmailSerializer
+
+    def post(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
-        if serializer.is_valid():
-            user = serializer.save()
+        serializer.is_valid(raise_exception=True)
 
-            # Generate refresh token
-            refresh = RefreshToken.for_user(user)
-            verification_token = str(refresh.access_token)
+        uid = serializer.validated_data["uid"]
+        token = serializer.validated_data["token"]
+        user_id = urlsafe_base64_decode(uid).decode()
+        user = get_object_or_404(User, pk=user_id)
 
-            # Create verification URL
-            verification_url = f"{request.scheme}://{request.get_host()}/register/verify/{user.id}/{verification_token}/"
-
-            # Send email
-            send_email(
-                subject="Account Activation",
-                body="register/verify_email_template.html",
-                context={"verification_url": verification_url},
-                recipient_list=[user.email],
-            )
-
+        if default_token_generator.check_token(user, token):
+            user.email_verified = True
+            user.save()
             return Response(
-                {
-                    "message": "User registered successfully! Please check your email to activate your account."
-                },
-                status=status.HTTP_201_CREATED,
+                {"detail": "Email verified successfully."}, status=status.HTTP_200_OK
             )
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {"detail": "Invalid or expired token."}, status=status.HTTP_400_BAD_REQUEST
+        )
 
 
-class RegisterVerifyView(GenericAPIView):
-    """
-    This view verifies a user's email based on a provided token.
-    It handles token validation, user retrieval, and email verification.
-    """
+class ResendVerificationAPIView(GenericAPIView):
+    serializer_class = ResendVerificationSerializer
 
-    def get(self, request, uidb64, token):
-        try:
-            # Decode the uidb64 to get the user ID
-            user_id_from_url = int(base64.urlsafe_b64decode(uidb64).decode("utf-8"))
-        except (TypeError, ValueError) as e:
-            return Response(
-                {"message": f"Invalid user ID: {str(e)}"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+    def post(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
 
-        try:
-            # Validate the token and extract the user ID
-            access_token = AccessToken(token)
-            user_id_from_token = access_token["user_id"]
-        except Exception as e:
-            return Response(
-                {"message": f"Invalid or expired token: {str(e)}"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # If the user ID from URL does not match the user ID from the token
-        if user_id_from_url != user_id_from_token:
-            return Response(
-                {"message": "User ID mismatch."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Try to fetch the user from the database using the user ID from the URL
-        try:
-            user = User.objects.get(id=user_id_from_url)
-        except User.DoesNotExist:
-            return Response(
-                {"message": "User not found"}, status=status.HTTP_404_NOT_FOUND
-            )
-
-        # If the user is found but already verified
+        user = serializer.validated_data["user"]
         if user.email_verified:
             return Response(
-                {"message": "User is already verified."},
-                status=status.HTTP_200_OK,
+                {"detail": "Email already verified."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Otherwise, verify the user's email and activate the account
-        user.email_verified = True
-        user.is_active = True
-        user.save()
-
+        # Resend verification email
+        token = default_token_generator.make_token(user)
+        uid = urlsafe_base64_encode(str(user.pk).encode())
+        send_email(
+            subject="Resend Verification Email",
+            body="emails/verify_email.html",
+            context={"token": token, "uid": uid, "user": user},
+            recipient_list=[user.email],
+        )
         return Response(
-            {"message": "Email verified successfully!"},
-            status=status.HTTP_200_OK,
+            {"detail": "Verification email resent."}, status=status.HTTP_200_OK
         )
 
 
@@ -195,38 +141,6 @@ class LoginView(GenericAPIView):
             {"error": "Invalid credentials"},
             status=status.HTTP_400_BAD_REQUEST,
         )
-
-
-# class LoginView(GenericAPIView):
-#     serializer_class = LoginSerializer
-
-#     def post(self, request):
-#         serializer = self.get_serializer(data=request.data)
-#         serializer.is_valid(raise_exception=True)
-#         email = serializer.validated_data["email"]
-#         password = serializer.validated_data["password"]
-
-#         user = authenticate(email=email, password=password)
-#         if user:
-#             refresh = RefreshToken.for_user(user)
-#             access_token = str(refresh.access_token)
-#             return Response(
-#                 {"access": access_token, "refresh": str(refresh)},
-#                 status=status.HTTP_200_OK,
-#             )
-#         return Response(
-#             {"error": "Invalid credentials"}, status=status.HTTP_400_BAD_REQUEST
-#         )
-
-
-# class LogoutView(APIView):
-#     permission_classes = [permissions.IsAuthenticated]
-
-#     def post(self, request):
-#         request.user.auth_token.delete()
-#         return Response(
-#             {"message": "Successfully logged out"}, status=status.HTTP_200_OK
-#         )
 
 
 class LogoutView(APIView):

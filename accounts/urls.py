@@ -3,8 +3,9 @@ from django.urls import path, re_path
 
 # 2. Local imports
 from .views import (
-    RegisterView,
-    RegisterVerifyView,
+    RegisterAPIView,
+    VerifyEmailAPIView,
+    ResendVerificationAPIView,
     LoginView,
     LogoutView,
     ChangePasswordView,
@@ -15,16 +16,12 @@ from .views import (
 
 
 urlpatterns = [
-    path("register/", RegisterView.as_view(), name="register"),
-    # re_path(
-    #     r"^register/verify/(?P<uidb64>[0-9A-Za-z_\-]+)/(?P<token>[0-9A-Za-z]{1,64})/$",
-    #     RegisterVerifyView.as_view(),
-    #     name="verify_register",
-    # ),
+    path("register/", RegisterAPIView.as_view(), name="register"),
+    path("register/verify/", VerifyEmailAPIView.as_view(), name="verify-email"),
     path(
-        "register/verify/<str:uidb64>/<str:token>/",
-        RegisterVerifyView.as_view(),
-        name="verify_register",
+        "register/resend-verification/",
+        ResendVerificationAPIView.as_view(),
+        name="resend-verification",
     ),
     path("login/", LoginView.as_view(), name="login"),
     path("logout/", LogoutView.as_view(), name="logout"),

@@ -6,21 +6,55 @@ from django.contrib.auth import get_user_model
 from .models import Student, Instructor
 
 
-class RegisterSerializer(serializers.Serializer):
-    email = serializers.EmailField()
-    password = serializers.CharField(write_only=True, min_length=8)
-    confirm_password = serializers.CharField(write_only=True, min_length=8)
+User = get_user_model()
 
-    def validate(self, data):
-        if data["password"] != data["confirm_password"]:
-            raise serializers.ValidationError({"password": "Passwords do not match."})
-        return data
+
+class RegisterSerializer(serializers.ModelSerializer):
+    password2 = serializers.CharField(write_only=True)
+
+    class Meta:
+        model = User
+        fields = ["email", "password", "password2", "first_name", "last_name"]
+        extra_kwargs = {"password": {"write_only": True}}
+
+    def validate(self, attrs):
+        if attrs["password"] != attrs["password2"]:
+            raise serializers.ValidationError({"password2": "Passwords do not match."})
+        return attrs
 
     def create(self, validated_data):
-        email = validated_data["email"]
-        password = validated_data["password"]
-        user = get_user_model().objects.create_user(email=email, password=password)
+        validated_data.pop("password2")
+        user = User.objects.create_user(**validated_data)
+        user.is_active = False
+        user.save()
         return user
+
+
+class VerifyEmailSerializer(serializers.Serializer):
+    uid = serializers.CharField()
+    token = serializers.CharField()
+
+
+class ResendVerificationSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+    def validate_email(self, value):
+        try:
+            user = User.objects.get(email=value)
+        except User.DoesNotExist:
+            raise serializers.ValidationError("User with this email does not exist.")
+
+        if user.email_verified:
+            raise serializers.ValidationError("Email is already verified.")
+
+        # Store user object in context to be accessed later in the validate method
+        self.context["user"] = user
+        return value
+
+    def validate(self, attrs):
+        # Add the user to validated_data
+        attrs["user"] = self.context["user"]
+        return attrs
 
 
 class LoginSerializer(serializers.Serializer):

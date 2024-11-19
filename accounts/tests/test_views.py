@@ -1,154 +1,163 @@
-import pytest
-from django.urls import reverse
-
-from rest_framework import status
+# 1. Standard library imports
 from unittest.mock import patch
+
+# 2. Django imports
+from django.urls import reverse
+from django.utils.http import urlsafe_base64_encode
+from django.contrib.auth.tokens import default_token_generator
 from django.contrib.auth import get_user_model
-from rest_framework_simplejwt.tokens import AccessToken
-import base64
+from accounts.models import CustomUser
+
+# 3. Third-party imports
+import pytest
+from rest_framework import status
+from rest_framework.test import APIClient
 
 
-# Get the custom user model
 User = get_user_model()
 
 
 @pytest.fixture
 def api_client():
-    from rest_framework.test import APIClient
-
+    """Provides an instance of APIClient."""
     return APIClient()
 
 
 @pytest.fixture
 def create_user(db):
-    def make_user(email="test@example.com", password="password123", **kwargs):
+    def make_user(email="testuser@example.com", password="password123", **kwargs):
         return User.objects.create_user(email=email, password=password, **kwargs)
 
     return make_user
 
 
 @pytest.mark.django_db
-@patch("rest_framework_simplejwt.tokens.AccessToken")
-def test_register_verify_success(mock_access_token, create_user, api_client):
-    user = create_user(email="test@example.com", password="password123")
-    user.is_active = False
-    user.save()
+@patch("accounts.views.send_email")
+def test_register_verify_success(mock_send_email, api_client):
+    # Step 1: Register a new user
+    register_url = reverse("register")
+    register_data = {
+        "email": "testuser@example.com",
+        "password": "password123",
+        "password2": "password123",
+        "first_name": "Test",
+        "last_name": "User",
+    }
+    response = api_client.post(register_url, data=register_data, format="json")
+    assert response.status_code == 201
+    assert CustomUser.objects.filter(email=register_data["email"]).exists()
 
-    # Create a valid access token for the user
-    access_token = AccessToken.for_user(user)
+    # Step 2: Extract UID and token from the mocked email
+    user = CustomUser.objects.get(email=register_data["email"])
+    assert mock_send_email.called
+    email_context = mock_send_email.call_args[1]["context"]
+    token = email_context["token"]
+    uid = email_context["uid"]
+    assert token == default_token_generator.make_token(user)
+    assert uid == urlsafe_base64_encode(str(user.pk).encode())
 
-    # Mock the AccessToken class to return the token object
-    mock_access_token.return_value = access_token
+    # Step 3: Verify the email using the token and UID
+    verify_url = reverse("verify-email")
+    verify_data = {"uid": uid, "token": token}
+    response = api_client.post(verify_url, data=verify_data)
+    assert response.status_code == 200
+    assert response.data["detail"] == "Email verified successfully."
 
-    # Base64 encode the user ID
-    uidb64 = base64.urlsafe_b64encode(str(user.id).encode()).decode("utf-8")
-
-    # Construct the URL with the base64-encoded user ID and the mocked token
-    url = reverse("verify_register", args=[uidb64, str(access_token)])
-
-    # Perform the GET request
-    response = api_client.get(url)
-
-    # Assert that the status code is 200 OK
-    assert response.status_code == status.HTTP_200_OK
-
-    # Refresh user from the database to verify changes
+    # Step 4: Ensure user email is marked as verified
     user.refresh_from_db()
-    assert user.is_active
-    assert user.email_verified
+    assert user.email_verified is True
 
 
 @pytest.mark.django_db
 def test_register_password_mismatch(api_client):
-    data = {
+    register_url = reverse("register")
+    register_data = {
         "email": "testuser@example.com",
         "password": "password123",
-        "confirm_password": "differentpassword",
+        "password2": "password456",
+        "first_name": "Test",
+        "last_name": "User",
     }
-    url = reverse("register")
-    response = api_client.post(url, data)
 
-    assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert "password" in response.data
+    response = api_client.post(register_url, data=register_data)
+    assert response.status_code == 400
+    assert "password2" in response.data
 
 
 @pytest.mark.django_db
 def test_register_invalid_data(api_client):
-    data = {"email": "invalid_email", "password": "short", "confirm_password": "short"}
-    url = reverse("register")
-    response = api_client.post(url, data)
+    register_url = reverse("register")
+    invalid_data = {
+        "email": "",
+        "password": "password123",
+        "first_name": "",
+        "last_name": "",
+    }
 
-    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    response = api_client.post(register_url, data=invalid_data)
+    assert response.status_code == 400
     assert "email" in response.data
+    assert "first_name" in response.data
+    assert "last_name" in response.data
 
 
 @pytest.mark.django_db
-@patch("rest_framework_simplejwt.tokens.AccessToken")
-def test_register_verify_success(mock_access_token, create_user, api_client):
-    user = create_user(email="test@example.com", password="password123")
-    user.is_active = False
-    user.save()
+@patch("accounts.views.send_email")
+def test_register_verify_invalid_token(mock_send_email, api_client):
+    # Step 1: Register a new user
+    register_url = reverse("register")
+    register_data = {
+        "email": "testuser@example.com",
+        "password": "password123",
+        "password2": "password123",
+        "first_name": "Test",
+        "last_name": "User",
+    }
+    response = api_client.post(register_url, data=register_data)
+    assert response.status_code == 201
 
-    # Create a valid AccessToken for the user
-    access_token = AccessToken.for_user(user)
+    # Step 2: Extract UID but use an invalid token
+    user = CustomUser.objects.get(email=register_data["email"])
+    uid = urlsafe_base64_encode(str(user.pk).encode())
+    invalid_token = "invalid-token"
 
-    # Mock AccessToken to return the valid token
-    mock_access_token.return_value = access_token
+    # Step 3: Verify email with invalid token
+    verify_url = reverse("verify-email")
+    verify_data = {"uid": uid, "token": invalid_token}
+    response = api_client.post(verify_url, data=verify_data)
 
-    # Base64 encode the user ID
-    uidb64 = base64.urlsafe_b64encode(str(user.id).encode()).decode("utf-8")
-
-    # Construct the URL with the base64-encoded user ID and the actual token
-    url = reverse("verify_register", args=[uidb64, str(access_token)])
-
-    # Perform the GET request
-    response = api_client.get(url)
-
-    # Assert that the status code is 200 OK
-    assert response.status_code == status.HTTP_200_OK
-
-    # Refresh user from the database to verify changes
-    user.refresh_from_db()
-    assert user.is_active
-    assert user.email_verified
-
-
-@pytest.mark.django_db
-def test_register_verify_invalid_token(api_client):
-    # Invalid token scenario
-    url = reverse("verify_register", args=["9999", "invalidtoken"])
-    response = api_client.get(url)
-    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.status_code == 400
+    assert response.data["detail"] == "Invalid or expired token."
 
 
 @pytest.mark.django_db
 def test_register_verify_user_not_found(api_client):
-    # Create a user with necessary fields (email, first_name, last_name)
-    user = User.objects.create_user(
-        email="valid@example.com",
-        password="password123",
-        first_name="John",
-        last_name="Doe",
-    )
+    # Step 1: Use a non-existent UID
+    non_existent_uid = urlsafe_base64_encode(b"9999")  # UID for a non-existent user
+    valid_token = default_token_generator.make_token(CustomUser())  # Dummy token
 
-    # Create an access token for the user
-    valid_token = AccessToken.for_user(user)
+    # Step 2: Attempt to verify email
+    verify_url = reverse("verify-email")
+    verify_data = {"uid": non_existent_uid, "token": valid_token}
+    response = api_client.post(verify_url, data=verify_data)
 
-    # Simulate a request with a non-existent user ID (9999)
-    non_existent_user_id = 9999
-    uidb64 = base64.urlsafe_b64encode(str(non_existent_user_id).encode()).decode(
-        "utf-8"
-    )
-    url = reverse("verify_register", args=[uidb64, str(valid_token)])
+    assert response.status_code == 404
+    assert response.data["detail"] == "No CustomUser matches the given query."
 
-    # Perform the GET request
-    response = api_client.get(url)
 
-    # Check the content for debugging
-    print(response.content)
+@pytest.mark.django_db
+@patch("accounts.views.send_email")
+def test_register_resend_verification_email(mock_send_email, api_client, create_user):
+    # Step 1: Create a user without email verification
+    user = create_user(email_verified=False)
 
-    # Assert that the status code is 400 (due to user ID mismatch)
-    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    # Step 2: Resend verification email
+    resend_url = reverse("resend-verification")
+    response = api_client.post(resend_url, data={"email": user.email})
+
+    assert response.status_code == 200
+    assert response.data["detail"] == "Verification email resent."
+    assert mock_send_email.called
 
 
 @pytest.mark.django_db
