@@ -217,25 +217,30 @@ class PasswordResetConfirmView(GenericAPIView):
 
     def post(self, request, uidb64, token):
         try:
+            # Decode the user ID from the base64 encoded UID
             user_id = urlsafe_base64_decode(uidb64).decode()
             user = get_user_model().objects.get(id=user_id)
+        except (ValueError, TypeError, get_user_model().DoesNotExist):
+            # If the user doesn't exist or the UID is invalid, return a bad request response
+            return Response(
+                {"detail": "Invalid user or token."}, status=status.HTTP_400_BAD_REQUEST
+            )
 
-            if not default_token_generator.check_token(user, token):
-                return Response(
-                    {"detail": "Invalid token."}, status=status.HTTP_400_BAD_REQUEST
-                )
+        # Check if the token is valid for the user
+        if not default_token_generator.check_token(user, token):
+            return Response(
+                {"detail": "Invalid token."}, status=status.HTTP_400_BAD_REQUEST
+            )
 
-            serializer = self.get_serializer(data=request.data)
-            if serializer.is_valid():
-                serializer.save(user=user)
+        # Now, let's validate and save the new password
+        serializer = self.get_serializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save(user=user)
+            return Response(
+                {"detail": "Password reset successful."}, status=status.HTTP_200_OK
+            )
 
-                return Response(
-                    {"detail": "Password reset successful."}, status=status.HTTP_200_OK
-                )
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-        except Exception as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class UserProfileView(GenericAPIView):

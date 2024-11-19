@@ -27,8 +27,8 @@ urlpatterns = [
     path("logout/", LogoutView.as_view(), name="logout"),
     path("password/change/", ChangePasswordView.as_view(), name="change_password"),
     path("password/reset/", PasswordResetView.as_view(), name="reset_password"),
-    re_path(
-        r"^password/reset/confirm/(?P<uidb64>[0-9A-Za-z_\-]+)/(?P<token>[0-9A-Za-z]{1,13}-[0-9A-Za-z]{1,40})/$",
+    path(
+        "api/password/reset/confirm/<uidb64>/<token>/",
         PasswordResetConfirmView.as_view(),
         name="confirm_reset_password",
     ),
