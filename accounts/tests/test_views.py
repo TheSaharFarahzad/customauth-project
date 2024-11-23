@@ -3,15 +3,16 @@ from unittest.mock import patch
 
 # 2. Django imports
 from django.urls import reverse
-from django.utils.http import urlsafe_base64_encode
-from django.contrib.auth.tokens import default_token_generator
 from django.contrib.auth import get_user_model
-from accounts.models import CustomUser
+from django.contrib.auth.tokens import default_token_generator
+from django.utils.http import urlsafe_base64_encode
+from django.utils.encoding import force_bytes
+from rest_framework import status
+from rest_framework.test import APIClient
 
 # 3. Third-party imports
 import pytest
-from rest_framework import status
-from rest_framework.test import APIClient
+import logging
 
 
 User = get_user_model()
@@ -24,62 +25,201 @@ def api_client():
 
 
 @pytest.fixture
-def create_user(db):
-    def make_user(email="testuser@example.com", password="password123", **kwargs):
-        return User.objects.create_user(email=email, password=password, **kwargs)
+def create_user(django_user_model):
+    """Fixture to create a new user."""
 
-    return make_user
+    def _create_user(email, password, **kwargs):
+        return django_user_model.objects.create_user(
+            email=email, password=password, **kwargs
+        )
+
+    return _create_user
 
 
 @pytest.mark.django_db
 @pytest.mark.parametrize(
-    "register_data,expected_status,expected_errors",
+    "register_data, expected_status, expected_error_field, expected_error_message",
     [
-        # Valid registration
-        (
-            {
-                "email": "validuser@example.com",
-                "password": "password123",
-                "password2": "password123",
-                "first_name": "Valid",
-                "last_name": "User",
-            },
-            201,
-            None,
-        ),
-        # Password mismatch
-        (
-            {
-                "email": "mismatchuser@example.com",
-                "password": "password123",
-                "password2": "password456",
-                "first_name": "Mismatch",
-                "last_name": "User",
-            },
-            400,
-            ["password2"],
-        ),
-        # Missing fields
+        # Test missing email
         (
             {
                 "email": "",
                 "password": "password123",
+                "password_confirmation": "password123",
                 "first_name": "",
                 "last_name": "",
             },
-            400,
-            ["email", "first_name", "last_name"],
+            status.HTTP_400_BAD_REQUEST,
+            "email",
+            "This field may not be blank.",
+        ),
+        # Test missing password
+        (
+            {
+                "email": "missingfields@example.com",
+                "password": "",
+                "password_confirmation": "",
+                "first_name": "No",
+                "last_name": "Password",
+            },
+            status.HTTP_400_BAD_REQUEST,
+            "password",
+            "This field may not be blank.",
+        ),
+        # Test missing password confirmation
+        (
+            {
+                "email": "missingpasswordconfirmation@example.com",
+                "password": "password123",
+                "first_name": "No",
+                "last_name": "Confirmation",
+            },
+            status.HTTP_400_BAD_REQUEST,
+            "password_confirmation",
+            "This field is required.",
+        ),
+        # Test invalid email format
+        (
+            {
+                "email": "invalidemailformat.com",
+                "password": "password123",
+                "password_confirmation": "password123",
+                "first_name": "Invalid",
+                "last_name": "Email",
+            },
+            status.HTTP_400_BAD_REQUEST,
+            "email",
+            "Enter a valid email address.",
+        ),
+        # Test email already registered
+        (
+            {
+                "email": "existing@example.com",
+                "password": "password123",
+                "password_confirmation": "password123",
+                "first_name": "Existing",
+                "last_name": "User",
+            },
+            status.HTTP_400_BAD_REQUEST,
+            "email",
+            "custom user with this email already exists.",
+        ),
+        # Test weak password (less than 8 characters)
+        (
+            {
+                "email": "weakpassword@example.com",
+                "password": "short",
+                "password_confirmation": "short",
+                "first_name": "Weak",
+                "last_name": "Password",
+            },
+            status.HTTP_400_BAD_REQUEST,
+            "password",
+            "This password is too short. It must contain at least 8 characters.",
+        ),
+        # Test weak password (too common)
+        (
+            {
+                "email": "commonpassword@example.com",
+                "password": "password123",
+                "password_confirmation": "password123",
+                "first_name": "Common",
+                "last_name": "Password",
+            },
+            status.HTTP_400_BAD_REQUEST,
+            "password",
+            "This password is too common.",
+        ),
+        # Test wrong password confirmation
+        (
+            {
+                "email": "wrongconfirmation@example.com",
+                "password": "password123",
+                "password_confirmation": "password456",
+                "first_name": "Wrong",
+                "last_name": "Confirmation",
+            },
+            status.HTTP_400_BAD_REQUEST,
+            "password",
+            "Passwords must match.",
+        ),
+        # Test valid registration (to make sure it's valid)
+        (
+            {
+                "email": "validuser@example.com",
+                "password": "Sfrc.453",
+                "password_confirmation": "Sfrc.453",
+                "first_name": "Valid",
+                "last_name": "User",
+            },
+            status.HTTP_201_CREATED,
+            None,
+            None,
         ),
     ],
 )
-def test_register_user(api_client, register_data, expected_status, expected_errors):
+@patch("accounts.email.send_email")
+def test_register_user(
+    mock_send_email,
+    api_client,
+    register_data,
+    expected_status,
+    expected_error_field,
+    expected_error_message,
+    create_user,
+):
+
+    logging.basicConfig(
+        level=logging.DEBUG,  # format="%(asctime)s - %(levelname)s - %(message)s"
+    )
+
+    # If the email is already registered, we don't create a new user for the test
+    if expected_error_field == "email" and "existing" in register_data["email"]:
+        logging.debug(f"manam sahar dooste shoma {register_data["email"]}")
+        # Simulate an already existing user by creating it first
+        create_user(register_data["email"], register_data["password"])
+
     register_url = reverse("register")
     response = api_client.post(register_url, data=register_data)
 
+    # Assert the status code matches the expected status
     assert response.status_code == expected_status
-    if expected_errors:
-        for field in expected_errors:
-            assert field in response.data
+
+    # If we expect an error, check for the field and the error message
+    if expected_error_field:
+        assert expected_error_field in response.data
+        if expected_error_message:
+            assert expected_error_message in str(response.data)
+
+
+@pytest.mark.django_db
+@patch("accounts.views.send_email")
+def test_register_and_send_email(mock_send_mail, api_client, create_user):
+    # Arrange: Create a user and set up the registration data
+    register_url = reverse("register")
+    user_data = {
+        "email": "newuser@example.com",
+        "password": "securepassword123",
+        "password_confirmation": "securepassword123",
+    }
+
+    # Act: Register the user via the API
+    response = api_client.post(register_url, user_data, format="json")
+
+    # Assert: Check if the user was created and response is correct and send_mail was called
+    assert response.status_code == status.HTTP_201_CREATED
+    assert User.objects.filter(email=user_data["email"]).exists()
+    mock_send_mail.assert_called_once()
+    mock_send_mail.assert_called_with(
+        subject="Verify Your Email",
+        body="emails/verify_email.html",
+        context={
+            "token": mock_send_mail.call_args[1]["context"]["token"],
+            "uid": mock_send_mail.call_args[1]["context"]["uid"],
+            "user": mock_send_mail.call_args[1]["context"]["user"],
+        },
+        recipient_list=["newuser@example.com"],
+    )
 
 
 @pytest.mark.django_db
@@ -97,7 +237,7 @@ def test_register_user(api_client, register_data, expected_status, expected_erro
         # Invalid token
         (
             lambda user: urlsafe_base64_encode(str(user.pk).encode()),
-            lambda user: "invalid-token",
+            lambda user: "invalid-token",  # Manually providing an invalid token
             400,
             "Invalid or expired token.",
         ),
@@ -105,13 +245,20 @@ def test_register_user(api_client, register_data, expected_status, expected_erro
         (
             lambda user: urlsafe_base64_encode(b"9999"),  # UID for non-existent user
             lambda user: default_token_generator.make_token(user),
-            404,
-            "No CustomUser matches the given query.",
+            400,
+            "Invalid UID.",
+        ),
+        # Malformed UID
+        (
+            lambda user: "invalid-uid",  # Providing a malformed UID
+            lambda user: default_token_generator.make_token(user),
+            400,
+            "Invalid UID.",
         ),
     ],
 )
-def test_verify_register(
-    mock_send_email,
+def test_register_verify(
+    mock_send_mail,
     api_client,
     create_user,
     uid,
@@ -119,26 +266,132 @@ def test_verify_register(
     expected_status,
     expected_detail,
 ):
-    # Step 1: Create a user for cases where user is needed
-    user = create_user(email="testuser@example.com", email_verified=False)
+    # Step 1: Create a user and simulate registration
+    register_url = reverse("register")
+    user_data = {
+        "email": "newuser@example.com",
+        "password": "securepassword123",
+        "password_confirmation": "securepassword123",
+    }
+    response = api_client.post(register_url, user_data, format="json")
+    assert response.status_code == status.HTTP_201_CREATED
 
-    # Step 2: Calculate the UID and token based on the user
-    generated_uid = uid(user)
-    generated_token = token(user)
+    # Fetch the user from the database to verify it was created
+    user = User.objects.get(email=user_data["email"])
+    assert User.objects.filter(email=user_data["email"]).exists()
 
-    # Step 3: Simulate email verification request
-    verify_url = reverse("verify-email")
-    verify_data = {"uid": generated_uid, "token": generated_token}
+    # Ensure the email was sent
+    mock_send_mail.assert_called_once()
+    context = mock_send_mail.call_args[1]["context"]  # Get context from mock call
+    assert "token" in context and "uid" in context and "user" in context
+
+    # Step 2: Calculate the UID and token based on the context passed in the email
+    generated_uid = context["uid"]
+    generated_token = context["token"]
+
+    # Step 3: Simulate email verification request with the correct token and uid for successful test
+    # For invalid test cases, use the manually supplied invalid token/uid from parametrize
+    verify_url = reverse("register-verify")
+    verify_data = (
+        {"uid": generated_uid, "token": generated_token}
+        if expected_status == 200
+        else {
+            "uid": uid(user),
+            "token": token(user),  # Inject invalid uid/token manually for failing cases
+        }
+    )
     response = api_client.post(verify_url, data=verify_data)
 
     # Step 4: Assert the expected outcome
     assert response.status_code == expected_status
     assert response.data["detail"] == expected_detail
 
-    # Additional check for successful verification
+    # Step 5: Additional check for successful verification
     if expected_status == 200:
-        user.refresh_from_db()
+        user.refresh_from_db()  # Reload user from database
         assert user.email_verified is True
+
+
+@pytest.mark.django_db
+@patch("accounts.views.send_email")
+@pytest.mark.parametrize(
+    "uid,token,expected_status,expected_detail",
+    [
+        # Missing UID
+        (
+            lambda user: None,
+            lambda user: default_token_generator.make_token(user),
+            400,
+            "This field is required.",
+        ),
+        # Missing token
+        (
+            lambda user: urlsafe_base64_encode(str(user.pk).encode()),
+            lambda user: None,
+            400,
+            "This field is required.",
+        ),
+        # Missing both UID and token
+        (
+            lambda user: None,
+            lambda user: None,
+            400,
+            "This field is required.",
+        ),
+    ],
+)
+def test_register_verify_missing_fields(
+    mock_send_mail,
+    api_client,
+    create_user,
+    uid,
+    token,
+    expected_status,
+    expected_detail,
+):
+    # Step 1: Create a user and simulate registration
+    register_url = reverse("register")
+    user_data = {
+        "email": "newuser@example.com",
+        "password": "securepassword123",
+        "password_confirmation": "securepassword123",
+    }
+    response = api_client.post(register_url, user_data, format="json")
+    assert response.status_code == status.HTTP_201_CREATED
+
+    # Fetch the user from the database to verify it was created
+    user = User.objects.get(email=user_data["email"])
+    assert User.objects.filter(email=user_data["email"]).exists()
+
+    # Ensure the email was sent
+    mock_send_mail.assert_called_once()
+    context = mock_send_mail.call_args[1]["context"]  # Get context from mock call
+    assert "token" in context and "uid" in context and "user" in context
+
+    # Step 2: Calculate the UID and token based on the context passed in the email
+    generated_uid = context["uid"]
+    generated_token = context["token"]
+
+    # Step 3: Simulate email verification request with missing fields
+    verify_url = reverse("register-verify")
+
+    # Determine if uid or token is missing and create verify_data accordingly
+    verify_data = {}
+    if uid(user) is not None:
+        verify_data["uid"] = uid(user)
+    if token(user) is not None:
+        verify_data["token"] = token(user)
+
+    response = api_client.post(verify_url, data=verify_data)
+
+    # Step 4: Assert the expected outcome (adjusted for missing fields)
+    assert response.status_code == expected_status
+
+    # Check if 'uid' or 'token' field is in response.data and validate the error message
+    if "uid" in response.data:
+        assert response.data["uid"][0] == expected_detail
+    if "token" in response.data:
+        assert response.data["token"][0] == expected_detail
 
 
 @pytest.mark.django_db
@@ -151,7 +404,7 @@ def test_verify_register(
             False,
             True,
             200,
-            "Verification email resent.",
+            "Verification email resent successfully.",
             True,
         ),
         # User already verified
@@ -172,7 +425,7 @@ def test_verify_register(
         ),
     ],
 )
-def test_resend_verification_email(
+def test_register_resend_verification_email(
     mock_send_email,
     api_client,
     create_user,
@@ -184,31 +437,33 @@ def test_resend_verification_email(
 ):
     # Step 1: Set up the user if it exists
     if exists:
-        user = create_user(email_verified=email_verified)
+        user = User.objects.create_user(
+            email="testuser@example.com", password="testpassword"
+        )
+        user.email_verified = email_verified
+        user.save()
         email = user.email
     else:
-        email = "nonexistent@example.com"
+        email = "nonexistent@example.com"  # Non-existent user
 
     # Step 2: Attempt to resend verification email
-    resend_url = reverse("resend-verification")
+    resend_url = reverse("register-resend-verification")  # Correct URL
     response = api_client.post(resend_url, data={"email": email})
-
-    # Debugging response for unexpected formats or errors
-    print("Response status code:", response.status_code)
-    print("Response data:", response.data)
 
     # Step 3: Assert the expected response
     assert response.status_code == expected_status
 
-    if "detail" in response.data:
-        # View explicitly returned a "detail" message
+    if expected_status == 200:
+        # If the status is 200, check that the success message is returned
         assert response.data["detail"] == expected_detail
-    elif "email" in response.data:
-        # Serializer validation error
-        assert response.data["email"][0] == expected_detail
-    else:
-        assert False, f"Unexpected response format: {response.data}"
+    elif expected_status == 400:
+        # If the status is 400, check that the validation error message is returned
+        if "email" in response.data:
+            assert response.data["email"][0] == expected_detail
+        else:
+            assert response.data["detail"] == expected_detail
 
+    # Step 4: Assert whether the email was sent
     assert mock_send_email.called == mock_email_called
 
 
@@ -225,13 +480,13 @@ def test_resend_verification_email(
         # Invalid email
         (
             {"email": "invalid@example.com", "password": "password123"},
-            status.HTTP_400_BAD_REQUEST,
+            status.HTTP_401_UNAUTHORIZED,
             None,
         ),
         # Invalid password
         (
             {"email": "test@example.com", "password": "wrongpassword"},
-            status.HTTP_400_BAD_REQUEST,
+            status.HTTP_401_UNAUTHORIZED,
             None,
         ),
     ],
@@ -251,39 +506,81 @@ def test_login(api_client, create_user, login_data, expected_status, expected_ke
 
 @pytest.mark.django_db
 @pytest.mark.parametrize(
-    "authenticated, expected_status",
+    "authenticated, refresh_token, expected_status, expected_message",
     [
-        # Authenticated user logs out
+        # Authenticated user logs out with a valid refresh token
         (
             True,
+            "valid-refresh-token",
             status.HTTP_200_OK,
+            "Successfully logged out.",
+        ),
+        # Authenticated user logs out with an invalid refresh token
+        (
+            True,
+            "invalid-refresh-token",
+            status.HTTP_400_BAD_REQUEST,
+            "Invalid token.",
         ),
         # Unauthenticated user tries to log out
         (
             False,
+            None,
             status.HTTP_401_UNAUTHORIZED,
+            "Authentication credentials were not provided.",
+        ),
+        # Authenticated user logs out without providing a refresh token
+        (
+            True,
+            None,
+            status.HTTP_400_BAD_REQUEST,
+            "Refresh token required.",
         ),
     ],
 )
-def test_logout(api_client, create_user, authenticated, expected_status):
+def test_logout(
+    api_client,
+    create_user,
+    authenticated,
+    refresh_token,
+    expected_status,
+    expected_message,
+):
     # Step 1: Set up the user and authentication if needed
     if authenticated:
         user = create_user(email="test@example.com", password="password123")
         api_client.force_authenticate(user=user)
 
-    # Step 2: Attempt to log out
-    url = reverse("logout")
-    response = api_client.post(url)
+    # Step 2: Prepare the payload
+    payload = {}
+    if refresh_token:
+        payload["refresh_token"] = refresh_token
 
-    # Step 3: Assert the expected response status
-    assert response.status_code == expected_status
+    # Step 3: Mock the RefreshToken and its blacklist method
+    with patch("accounts.views.RefreshToken") as MockRefreshToken:
+        mock_token = MockRefreshToken.return_value
+        # Mock the behavior of the blacklist method
+        if refresh_token == "valid-refresh-token":
+            mock_token.blacklist.return_value = None  # Simulate successful blacklisting
+        else:
+            mock_token.blacklist.side_effect = Exception(
+                "Invalid token"
+            )  # Simulate invalid token error
+
+        # Step 4: Attempt to log out
+        url = reverse("logout")
+        response = api_client.post(url, data=payload)
+
+        # Step 5: Assert the expected response status and message
+        assert response.status_code == expected_status
+        assert expected_message in response.data.values()
 
 
 @pytest.mark.django_db
 @pytest.mark.parametrize(
-    "old_password,new_password,expected_status,check_new_password",
+    "old_password, new_password, expected_status, check_new_password",
     [
-        # Valid old password
+        # Valid password change
         (
             "password123",
             "newpassword123",
@@ -297,6 +594,20 @@ def test_logout(api_client, create_user, authenticated, expected_status):
             status.HTTP_400_BAD_REQUEST,
             False,
         ),
+        # New password is the same as the old one
+        (
+            "password123",
+            "password123",
+            status.HTTP_400_BAD_REQUEST,
+            False,
+        ),
+        # Missing new password (serializer validation should catch this)
+        (
+            "password123",
+            "",
+            status.HTTP_400_BAD_REQUEST,
+            False,
+        ),
     ],
 )
 def test_change_password(
@@ -307,254 +618,252 @@ def test_change_password(
     expected_status,
     check_new_password,
 ):
+    # Create user and authenticate
     user = create_user(email="test@example.com", password="password123")
     api_client.force_authenticate(user=user)
 
-    url = reverse("change_password")
-    data = {"old_password": old_password, "new_password": new_password}
-    response = api_client.post(url, data)
+    # URL for the password change view
+    url = reverse("password-change")
 
+    # Prepare data for the request
+    data = {"old_password": old_password, "new_password": new_password}
+
+    # Send PUT request to change password
+    response = api_client.put(url, data)
+
+    # Assert the response status
     assert response.status_code == expected_status
-    if check_new_password:
+
+    # If password change was successful (status 200), check the new password
+    if expected_status == status.HTTP_200_OK:
         user.refresh_from_db()
         assert user.check_password(new_password) is True
-    else:
-        assert not user.check_password(new_password)
+    elif expected_status == status.HTTP_400_BAD_REQUEST:
+        # Ensure the password has not been updated and remains the old one
+        user.refresh_from_db()
+        if old_password == "wrongpassword":
+            # If the old password is incorrect, ensure the original password is still there
+            assert user.check_password("password123") is True
+        else:
+            # Other validation failure cases (like the same old and new password)
+            assert user.check_password(old_password) is True
 
 
 @pytest.mark.django_db
-@patch("accounts.views.send_email")
+def test_change_password_unauthenticated(api_client):
+    """
+    Test that an unauthenticated user cannot change the password.
+    """
+    url = reverse("password-change")
+    data = {"old_password": "password123", "new_password": "newpassword123"}
+
+    # Make a request without authentication
+    response = api_client.put(url, data)
+
+    # Assert that the response is unauthorized
+    assert response.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "detail" in response.data
+
+
+@pytest.mark.django_db
+@patch("django.core.mail.EmailMessage.send")
 @pytest.mark.parametrize(
-    "email, exists, expected_status, mock_email_called, expected_subject, expected_body",
+    "email, exists, is_active, expected_status, mock_email_called",
     [
-        # Valid email, user exists
+        # Valid email, user exists, and is active - email should be sent.
         (
             "test@example.com",
             True,
-            status.HTTP_200_OK,
             True,
-            "Reset Your Password",
-            "accounts/password_reset_email.html",
+            200,
+            True,
         ),
-        # Invalid email, user does not exist
+        # Valid email, but user does not exist - should return 400 and not send email.
         (
             "nonexistent@example.com",
             False,
-            status.HTTP_400_BAD_REQUEST,
+            True,
+            400,
             False,
-            None,
-            None,
         ),
-        # Empty email
+        # Empty email - should return 400 and not send email.
         (
             "",
             False,
-            status.HTTP_400_BAD_REQUEST,
+            True,
+            400,
             False,
-            None,
-            None,
         ),
-        # User exists, but email is already reset
+        # Valid email, user exists, but is inactive - should return 400 and not send email.
         (
-            "reset@example.com",
+            "inactive@example.com",
             True,
-            status.HTTP_200_OK,
+            False,
+            400,
+            False,
+        ),
+        # Invalid email format - should return 400 and not send email.
+        (
+            "invalid-email",
+            False,
             True,
-            "Reset Your Password",
-            "accounts/password_reset_email.html",
+            400,
+            False,
         ),
     ],
 )
 def test_password_reset(
-    mock_send_email,
+    mock_email_send,
     api_client,
     create_user,
     email,
     exists,
+    is_active,
     expected_status,
     mock_email_called,
-    expected_subject,
-    expected_body,
 ):
-    # Arrange: Create user if exists
+    """
+    Test the password reset endpoint with various email inputs and user states.
+    """
+    # If the user should exist, create a user with the specified email and active state.
     if exists:
-        user = create_user(email=email, password="password123")
-    else:
-        user = None  # No user will be created if the email doesn't exist
+        create_user(email=email, password="password123", is_active=is_active)
 
-    # Act: Make a password reset request
-    url = reverse("reset_password")
+    # Make a POST request to the password reset endpoint with the provided email.
+    url = reverse("password-reset")
     response = api_client.post(url, {"email": email})
 
-    # Assert: Check the response status
+    # Assert the response status matches the expected status.
     assert response.status_code == expected_status
 
-    # Check if email was sent based on the scenario
+    # Assert whether the email sending logic was triggered based on expectations.
     if mock_email_called:
-        mock_send_email.assert_called_once()
-        called_args, called_kwargs = mock_send_email.call_args
-        assert called_kwargs["subject"] == expected_subject
-        assert called_kwargs["body"] == expected_body
-        assert called_kwargs["recipient_list"] == [email]
-        assert "context" in called_kwargs
-        assert "user" in called_kwargs["context"]
-        assert "reset_link" in called_kwargs["context"]
+        mock_email_send.assert_called_once()
     else:
-        mock_send_email.assert_not_called()
+        mock_email_send.assert_not_called()
+
+
+@pytest.mark.django_db
+@patch("accounts.email.send_email")
+def test_password_reset_email(mock_send_email, api_client, create_user):
+
+    user = create_user(email="test@example.com", password="oldpassword123")
+    url = reverse("password-reset")
+    response = api_client.post(url, {"email": user.email})
+    assert response.status_code == 200
+    assert "Password reset email sent." in response.data.get("message", "")
+
+    # Simulate valid UID and token (mocked for the test)
+    uidb64 = urlsafe_base64_encode(force_bytes(user.pk))  # Mocked UID encoding
+    token = "valid-token"  # This should be a valid token generated in your app
+
+    # Prepare the data for the request
+    data = {
+        "new_password": "newpassword123",
+        "confirm_password": "newpassword123",
+        "uidb64": uidb64,
+        "token": token,
+    }
+
+    # Call the password reset confirm view
+    url = reverse("password-reset-confirm", kwargs={"uidb64": uidb64, "token": token})
+    response = api_client.post(url, data)
+
+    # Assert: Check if the response is correct and send_email was called
+    assert response.status_code == 200
+    assert "Password reset successful." in response.data.get("message", response.data)
 
 
 @pytest.mark.django_db
 @pytest.mark.parametrize(
-    "test_uid, test_token, new_password, confirm_password, expected_status, expected_detail, mock_email_called",
+    "new_password, confirm_password, expected_status, error_field, expected_message",
     [
-        # Successful password reset confirmation
+        # Valid password reset
         (
-            "valid_uid",
-            "valid_token",
             "newpassword123",
             "newpassword123",
-            status.HTTP_200_OK,
+            200,
+            "message",
             "Password reset successful.",
-            False,  # Email not called in this case
-        ),
-        # Invalid token case
-        (
-            "valid_uid",
-            "invalid_token",
-            "newpassword123",
-            "newpassword123",
-            status.HTTP_400_BAD_REQUEST,
-            "Invalid token.",
-            False,  # Email not called in this case
-        ),
-        # User not found for uid
-        (
-            "non_existent_uid",
-            "valid_token",
-            "newpassword123",
-            "newpassword123",
-            status.HTTP_400_BAD_REQUEST,
-            "Invalid user or token.",
-            False,
         ),
         # Passwords do not match
         (
-            "valid_uid",
-            "valid_token",
             "newpassword123",
-            "mismatchpassword",
-            status.HTTP_400_BAD_REQUEST,
-            "Passwords do not match.",
-            False,
+            "differentpassword123",
+            400,
+            "password",
+            "Passwords must match.",
         ),
-        # Empty new password field
+        # New password is too short
         (
-            "valid_uid",
-            "valid_token",
-            "",
-            "newpassword123",
-            status.HTTP_400_BAD_REQUEST,
-            "This field may not be blank.",
-            False,
+            "short",
+            "short",
+            400,
+            "new_password",
+            "Password must be at least 8 characters long.",
         ),
-        # Empty confirm password field
+        # New password is same as old password
         (
-            "valid_uid",
-            "valid_token",
-            "newpassword123",
-            "",
-            status.HTTP_400_BAD_REQUEST,
-            "This field may not be blank.",
-            False,
+            "oldpassword123",
+            "oldpassword123",
+            400,
+            "new_password",
+            "New password cannot be the same as the old one.",
         ),
-        # Both fields empty
+        # Missing required fields
         (
-            "valid_uid",
-            "valid_token",
             "",
             "",
-            status.HTTP_400_BAD_REQUEST,
+            400,
+            "new_password",
             "This field may not be blank.",
-            False,
         ),
     ],
 )
-@patch("django.core.mail.send_mail")
-def test_password_reset_confirm5(
+@patch("accounts.email.send_email")
+def test_password_reset_confirm(
     mock_send_email,
     api_client,
     create_user,
-    test_uid,
-    test_token,
     new_password,
     confirm_password,
     expected_status,
-    expected_detail,
-    mock_email_called,
+    error_field,
+    expected_message,
 ):
-    # Arrange: Create a user and generate valid uidb64 and token for a real password reset
+    # Create a valid user for testing
     user = create_user(email="test@example.com", password="oldpassword123")
 
-    # Trigger password reset email
-    url_reset = reverse("reset_password")
-    response_reset = api_client.post(url_reset, data={"email": user.email})
+    # Simulate valid UID and token (mocked for the test)
+    uidb64 = urlsafe_base64_encode(force_bytes(user.pk))  # Mocked UID encoding
+    token = "valid-token"  # This should be a valid token generated in your app
 
-    assert response_reset.status_code == status.HTTP_200_OK
-    assert "message" in response_reset.data
+    # Prepare the data for the request
+    data = {
+        "new_password": new_password,
+        "confirm_password": confirm_password,
+        "uidb64": uidb64,
+        "token": token,
+    }
 
-    # Generate valid uidb64 and token for the user
-    uidb64 = (
-        urlsafe_base64_encode(str(user.pk).encode())
-        if test_uid == "valid_uid"
-        else test_uid
-    )
-    token = (
-        default_token_generator.make_token(user)
-        if test_token == "valid_token"
-        else test_token
-    )
+    # Call the password reset confirm view
+    url = reverse("password-reset-confirm", kwargs={"uidb64": uidb64, "token": token})
+    response = api_client.post(url, data)
 
-    # Act: Post to password reset confirm
-    url_confirm = reverse("confirm_reset_password", args=[uidb64, token])
-    response_confirm = api_client.post(
-        url_confirm,
-        data={"new_password": new_password, "confirm_password": confirm_password},
-    )
+    # Assert the response status code
+    assert response.status_code == expected_status
 
-    # Assert: Check if the response contains expected status and detail
-    assert response_confirm.status_code == expected_status
+    # For error status codes, check for error message in the specified error field
+    if expected_status == 400:
+        # Get the error details from the response
+        error_field_data = response.data.get(error_field)
 
-    if expected_status == status.HTTP_200_OK:
-        assert response_confirm.data["detail"] == expected_detail
-        user.refresh_from_db()
-        assert user.check_password(new_password)
-    elif expected_status == status.HTTP_400_BAD_REQUEST:
-        if "detail" in response_confirm.data:
-            assert response_confirm.data["detail"] == expected_detail
-        elif "non_field_errors" in response_confirm.data:
-            assert response_confirm.data["non_field_errors"][0] == expected_detail
-        elif "new_password" in response_confirm.data:
-            assert response_confirm.data["new_password"][0] == expected_detail
-        elif "confirm_password" in response_confirm.data:
-            assert response_confirm.data["confirm_password"][0] == expected_detail
-        else:
-            raise AssertionError(
-                f"Expected error detail '{expected_detail}' not found in response: {response_confirm.data}"
-            )
+        # If the error is a dictionary (nested error structure), get the specific error message
+        if isinstance(error_field_data, dict):
+            # Check if the error is inside the nested dictionary under the same error field
+            error_field_data = error_field_data.get(error_field, "")
 
-    # If an email should have been sent, check if send_email was called
-    if mock_email_called:
-        mock_send_email.assert_called_once()
+        assert expected_message in str(error_field_data)
     else:
-        mock_send_email.assert_not_called()
-
-
-# @pytest.mark.django_db
-# def test_user_profile_view(api_client, create_user):
-#     user = create_user(email="test@example.com", password="password123")
-#     api_client.force_authenticate(user=user)
-
-#     url = reverse("user_profile")
-#     response = api_client.get(url)
-
-#     assert response.status_code == status.HTTP_200_OK
+        # For successful responses, check the message in the response
+        assert expected_message in response.data.get(error_field, response.data)

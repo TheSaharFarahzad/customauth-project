@@ -1,14 +1,14 @@
 # 1. Django imports
-from django.urls import path, re_path
+from django.urls import path
 
 # 2. Local imports
 from .views import (
     RegisterAPIView,
-    VerifyEmailAPIView,
+    RegisterVerifyAPIView,
     ResendVerificationAPIView,
     LoginView,
     LogoutView,
-    ChangePasswordView,
+    PasswordChangeView,
     PasswordResetView,
     PasswordResetConfirmView,
     UserProfileView,
@@ -17,20 +17,20 @@ from .views import (
 
 urlpatterns = [
     path("register/", RegisterAPIView.as_view(), name="register"),
-    path("register/verify/", VerifyEmailAPIView.as_view(), name="verify-email"),
+    path("register/verify/", RegisterVerifyAPIView.as_view(), name="register-verify"),
     path(
         "register/resend-verification/",
         ResendVerificationAPIView.as_view(),
-        name="resend-verification",
+        name="register-resend-verification",
     ),
     path("login/", LoginView.as_view(), name="login"),
     path("logout/", LogoutView.as_view(), name="logout"),
-    path("password/change/", ChangePasswordView.as_view(), name="change_password"),
-    path("password/reset/", PasswordResetView.as_view(), name="reset_password"),
+    path("password/change/", PasswordChangeView.as_view(), name="password-change"),
+    path("password/reset/", PasswordResetView.as_view(), name="password-reset"),
     path(
-        "api/password/reset/confirm/<uidb64>/<token>/",
+        "password/reset/confirm/<uidb64>/<token>/",
         PasswordResetConfirmView.as_view(),
-        name="confirm_reset_password",
+        name="password-reset-confirm",
     ),
-    path("profile/", UserProfileView.as_view(), name="user_profile"),
+    path("profile/", UserProfileView.as_view(), name="profile"),
 ]
